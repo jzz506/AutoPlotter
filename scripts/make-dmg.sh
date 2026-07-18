@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 
 APP_PATH="src-tauri/target/release/bundle/macos/AutoPlotter.app"
 OUT_DIR="src-tauri/target/release/bundle/dmg"
-DMG_PATH="$OUT_DIR/AutoPlotter_1.0.0_aarch64.dmg"
+DMG_PATH="$OUT_DIR/AutoPlotter_1.0.1_aarch64.dmg"
 STAGE="$OUT_DIR/dmg-staging"
 
 if [ ! -d "$APP_PATH" ]; then

@@ -65,27 +65,55 @@ function chartToPython(config: ChartConfig): string[] {
   const lines: string[] = []
   const title = pyStr(config.title || CHART_TYPE_LABELS[config.type] || 'chart')
   const common = `title=${title}, width=${config.width}, height=${config.height}, template='plotly${config.theme === 'dark' ? '_dark' : ''}'`
+  const groupErr = config.errorMode === 'std' || config.errorMode === 'sem'
+  const errFunc = config.errorMode === 'sem' ? "lambda s: s.std() / (len(s) ** 0.5)" : "'std'"
   switch (config.type) {
     case 'line': {
       const yCols = (config.y ?? '').split('|').filter(Boolean)
       const x = pyStr(config.x ?? '')
-      if (config.sortBy === 'x-asc' || config.sortBy === 'x-desc') {
-        lines.push(`df = df.sort_values(by=${x}, ascending=${config.sortBy === 'x-asc' ? 'True' : 'False'})`)
+      if (config.sortBy === 'x-asc' || config.sortBy === 'x-desc' || groupErr) {
+        lines.push(`df = df.sort_values(by=${x}, ascending=${config.sortBy === 'x-desc' ? 'False' : 'True'})`)
       }
-      lines.push(
-        `fig = px.line(df, x=${x}, y=[${yCols.map(pyStr).join(', ')}], ${common})` ,
-      )
+      if (groupErr) {
+        lines.push(
+          `_grp = df.groupby(${x}, sort=True)`,
+          `_mean = _grp[[${yCols.map(pyStr).join(', ')}]].mean().reset_index()`,
+          `fig = px.line(_mean, x=${x}, y=[${yCols.map(pyStr).join(', ')}], ${common})`,
+        )
+        for (const [i, col] of yCols.entries()) {
+          lines.push(
+            `fig.data[${i}].error_y = dict(type='data', visible=True, array=_grp[${pyStr(col)}].agg(${errFunc}).reindex(_mean[${x}]).tolist())`,
+          )
+        }
+      } else {
+        let errArgs = ''
+        if (config.errorMode === 'symmetric' && config.errorCol) {
+          errArgs = `, error_y=${pyStr(config.errorCol)}`
+        } else if (config.errorMode === 'asymmetric' && config.errorPlusCol && config.errorMinusCol) {
+          errArgs = `, error_y=${pyStr(config.errorPlusCol)}, error_y_minus=${pyStr(config.errorMinusCol)}`
+        }
+        lines.push(`fig = px.line(df, x=${x}, y=[${yCols.map(pyStr).join(', ')}]${errArgs}, ${common})`)
+      }
       break
     }
-    case 'scatter':
+    case 'scatter': {
+      let errArgs = ''
+      if (config.errorMode === 'symmetric' && config.errorCol) {
+        errArgs = `, error_y=${pyStr(config.errorCol)}`
+      } else if (config.errorMode === 'asymmetric' && config.errorPlusCol && config.errorMinusCol) {
+        errArgs = `, error_y=${pyStr(config.errorPlusCol)}, error_y_minus=${pyStr(config.errorMinusCol)}`
+      }
       lines.push(
-        `fig = px.scatter(df, x=${pyStr(config.x ?? '')}, y=${pyStr(config.y ?? '')}${config.color ? `, color=${pyStr(config.color)}` : ''}, ${common})`,
+        `fig = px.scatter(df, x=${pyStr(config.x ?? '')}, y=${pyStr(config.y ?? '')}${config.color ? `, color=${pyStr(config.color)}` : ''}${errArgs}, ${common})`,
       )
+      if (groupErr) lines.push('# 注意：网页端散点图不支持自动标准差/标准误，此处与网页一致未绘制误差棒')
       break
+    }
     case 'bar':
     case 'barh': {
       const x = pyStr(config.x ?? '')
       const orient = config.type === 'barh' ? ', orientation="h"' : ''
+      const errParam = config.type === 'barh' ? 'error_x' : 'error_y'
       if (config.aggregation === 'count' || !config.y) {
         lines.push(
           `_counts = df[${x}].astype(str).value_counts().reset_index()`,
@@ -95,9 +123,22 @@ function chartToPython(config: ChartConfig): string[] {
       } else {
         const y = pyStr(config.y)
         const aggFn = config.aggregation === 'none' ? 'mean' : config.aggregation
+        lines.push(`_agg = df.groupby(df[${x}].astype(str))[${y}].agg('${aggFn}').reset_index()`)
+        if (groupErr) {
+          lines.push(
+            `_agg['_err'] = df.groupby(df[${x}].astype(str))[${y}].agg(${errFunc}).reindex(_agg[${x}].astype(str)).tolist()`,
+          )
+        } else if (config.errorMode === 'symmetric' && config.errorCol) {
+          lines.push(`_agg['_err'] = df.groupby(df[${x}].astype(str))[${pyStr(config.errorCol)}].mean().reindex(_agg[${x}].astype(str)).tolist()`)
+        } else if (config.errorMode === 'asymmetric' && config.errorPlusCol && config.errorMinusCol) {
+          lines.push(
+            `_agg['_err'] = df.groupby(df[${x}].astype(str))[${pyStr(config.errorPlusCol)}].mean().reindex(_agg[${x}].astype(str)).tolist()`,
+            `_agg['_errm'] = df.groupby(df[${x}].astype(str))[${pyStr(config.errorMinusCol)}].mean().reindex(_agg[${x}].astype(str)).tolist()`,
+          )
+        }
+        const errArg = config.errorMode === 'none' ? '' : config.errorMode === 'asymmetric' ? `, ${errParam}='_err', ${errParam}_minus='_errm'` : `, ${errParam}='_err'`
         lines.push(
-          `_agg = df.groupby(df[${x}].astype(str))[${y}].agg('${aggFn}').reset_index()`,
-          `fig = px.bar(_agg, x=${config.type === 'barh' ? y : x}, y=${config.type === 'barh' ? x : y}${orient}, ${common})`,
+          `fig = px.bar(_agg, x=${config.type === 'barh' ? y : x}, y=${config.type === 'barh' ? x : y}${orient}${errArg}, ${common})`,
         )
       }
       break
@@ -139,6 +180,24 @@ function chartToPython(config: ChartConfig): string[] {
         `fig = px.imshow(_corr, text_auto='.2f', zmin=-1, zmax=1, color_continuous_scale='RdBu_r', ${common})`,
       )
       break
+  }
+
+  if (config.preset === 'publication') {
+    lines.push(`fig.update_layout(font=dict(family='Arial', size=${Math.round(config.fontSize * 1.15)}))`)
+  } else if (config.preset === 'presentation') {
+    lines.push(`fig.update_layout(font=dict(size=${Math.round(config.fontSize * 1.6)}))`)
+  }
+  if (config.xLog) lines.push(`fig.update_xaxes(type='log')`)
+  if (config.yLog) lines.push(`fig.update_yaxes(type='log')`)
+  for (const rl of config.refLines) {
+    if (rl.axis === 'y') {
+      lines.push(`fig.add_hline(y=${rl.value}, line_dash='dash', line_color='#94a3b8'${rl.label ? `, annotation_text=${pyStr(rl.label)}` : ''})`)
+    } else {
+      lines.push(`fig.add_vline(x=${rl.value}, line_dash='dash', line_color='#94a3b8'${rl.label ? `, annotation_text=${pyStr(rl.label)}` : ''})`)
+    }
+  }
+  for (const an of config.annotations) {
+    lines.push(`fig.add_annotation(x=${an.x}, y=${an.y}, xref='paper', yref='paper', text=${pyStr(an.text)}, showarrow=False)`)
   }
   return lines
 }

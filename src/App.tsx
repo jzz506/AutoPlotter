@@ -4,8 +4,8 @@ import { applyOperations } from './lib/transform'
 import { profileDataset } from './lib/infer'
 import { checkQuality } from './lib/quality'
 import { recommendCharts } from './lib/recommend'
-import { getWorkbook } from './lib/workbookStore'
-import { sheetToDataset } from './lib/parse'
+import { getSourceFile } from './lib/bufferStore'
+import { parseSheetInWorker } from './lib/parseClient'
 import FileImport from './components/FileImport'
 import DataOverview from './components/DataOverview'
 import QualityReportPanel from './components/QualityReportPanel'
@@ -49,23 +49,31 @@ export default function App() {
     [working, profiles],
   )
 
-  const { workbook, fileName: wbFileName } = getWorkbook()
+  const { buffer: sourceBuffer, fileName: srcFileName, sheetNames } = getSourceFile()
   const hasData = state.status === 'ready' && working !== null
 
-  const switchSheet = (sheetName: string) => {
-    if (!workbook) return
-    const result = sheetToDataset(workbook, sheetName, wbFileName)
-    if (result.error || !result.dataset) {
-      dispatch({ type: 'TOAST', toast: { id: Date.now(), kind: 'error', message: result.error ?? '工作表解析失败' } })
-      return
+  const switchSheet = async (sheetName: string) => {
+    if (!sourceBuffer) return
+    dispatch({ type: 'PARSE_START' })
+    try {
+      const { result } = await parseSheetInWorker(srcFileName, sourceBuffer, sheetName, (ratio) =>
+        dispatch({ type: 'PARSE_PROGRESS', ratio }),
+      )
+      if (result.error || !result.dataset) {
+        dispatch({ type: 'PARSE_ERROR', message: result.error ?? '工作表解析失败' })
+        return
+      }
+      dispatch({
+        type: 'PARSE_SUCCESS',
+        dataset: result.dataset,
+        fileName: srcFileName,
+        sheetName,
+        warnings: result.warnings,
+      })
+    } catch (e) {
+      if (e instanceof Error && e.message === '已取消解析') return
+      dispatch({ type: 'PARSE_ERROR', message: e instanceof Error ? e.message : String(e) })
     }
-    dispatch({
-      type: 'PARSE_SUCCESS',
-      dataset: result.dataset,
-      fileName: wbFileName,
-      sheetName,
-      warnings: result.warnings,
-    })
   }
 
   return (
@@ -95,15 +103,15 @@ export default function App() {
           ))}
         </nav>
 
-        {workbook && hasData && (
+        {sheetNames.length > 1 && hasData && (
           <div className="sheet-bar" data-testid="sheet-bar">
             <span>工作表：</span>
-            {workbook.SheetNames.map((s) => (
+            {sheetNames.map((s) => (
               <button
                 key={s}
                 className={`btn btn-ghost small-btn${state.sheetName === s ? ' active-sheet' : ''}`}
                 data-testid={`sheet-${s}`}
-                onClick={() => switchSheet(s)}
+                onClick={() => void switchSheet(s)}
               >
                 {s}
               </button>
@@ -148,7 +156,7 @@ export default function App() {
         </main>
 
         <footer className="app-footer">
-          <span className="muted">AutoPlotter v1.0.0 · 纯本地运行 · 无后端 · 不上传任何数据</span>
+          <span className="muted">AutoPlotter v1.0.1 · 纯本地运行 · 无后端 · 不上传任何数据</span>
         </footer>
         <Toasts />
       </div>

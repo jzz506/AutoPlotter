@@ -1,7 +1,7 @@
 {
   "name": "autoplotter",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,7 +14,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:dmg": "tauri build && bash scripts/make-dmg.sh"
+    "tauri:dmg": "tauri build && bash scripts/make-dmg.sh",
+    "test:perf": "playwright test --config playwright.perf.config.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

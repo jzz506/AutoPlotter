@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
-import type { ChartType, ColumnProfile, Dataset } from '../types'
+import { useMemo, useState } from 'react'
+import type { ChartType, ColumnProfile, Dataset, ErrorMode } from '../types'
 import { useApp } from '../state/AppContext'
-import { buildChart, CHART_TYPE_LABELS, chartNeeds } from '../lib/chart'
+import { buildChart, CHART_TYPE_LABELS, chartNeeds, PRESET_LABELS } from '../lib/chart'
 import { defaultChartConfig } from '../lib/recommend'
 import ChartView from './ChartView'
 
@@ -66,6 +66,26 @@ export default function ChartBuilder({ working, profiles }: Props) {
   const showAggregation = config.type === 'bar' || config.type === 'barh' || config.type === 'pie'
   const showSort = config.type === 'bar' || config.type === 'barh' || config.type === 'line'
   const showColor = config.type === 'scatter'
+  const showErrorBars = config.type === 'line' || config.type === 'scatter' || config.type === 'bar' || config.type === 'barh'
+  const showLogX = config.type !== 'pie' && config.type !== 'heatmap'
+  const showLogY = config.type !== 'pie' && config.type !== 'heatmap'
+
+  const [refAxis, setRefAxis] = useState<'x' | 'y'>('y')
+  const [refValue, setRefValue] = useState('')
+  const [refLabel, setRefLabel] = useState('')
+  const [annX, setAnnX] = useState('0.5')
+  const [annY, setAnnY] = useState('0.9')
+  const [annText, setAnnText] = useState('')
+
+  const applyPreset = (preset: typeof config.preset) => {
+    if (preset === 'publication') {
+      setConfig({ preset, width: 640, height: 480, fontSize: 12, theme: 'light' })
+    } else if (preset === 'presentation') {
+      setConfig({ preset, width: 960, height: 540, fontSize: 14, showLegend: true })
+    } else {
+      setConfig({ preset, width: 720, height: 440, fontSize: 13 })
+    }
+  }
 
   return (
     <section className="panel" data-testid="chart-builder">
@@ -156,6 +176,136 @@ export default function ChartBuilder({ working, profiles }: Props) {
               </select>
             </label>
           )}
+
+          <label className="field">
+            <span>绘图预设</span>
+            <select
+              value={config.preset}
+              data-testid="chart-preset"
+              onChange={(e) => applyPreset(e.target.value as typeof config.preset)}
+            >
+              {Object.entries(PRESET_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </label>
+
+          {showErrorBars && (
+            <>
+              <label className="field">
+                <span>误差棒</span>
+                <select
+                  value={config.errorMode}
+                  data-testid="error-mode"
+                  onChange={(e) => setConfig({ errorMode: e.target.value as ErrorMode })}
+                >
+                  <option value="none">无</option>
+                  <option value="symmetric">对称误差（指定误差列）</option>
+                  <option value="asymmetric">上下误差（分别指定两列）</option>
+                  <option value="std">标准差（按 X 自动计算）</option>
+                  <option value="sem">标准误（按 X 自动计算）</option>
+                </select>
+              </label>
+              {config.errorMode === 'symmetric' && (
+                <label className="field">
+                  <span>误差列</span>
+                  <select value={config.errorCol ?? ''} data-testid="error-col" onChange={(e) => setConfig({ errorCol: e.target.value || undefined })}>
+                    <option value="">请选择</option>
+                    {numberCols.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </label>
+              )}
+              {config.errorMode === 'asymmetric' && (
+                <>
+                  <label className="field">
+                    <span>上误差列</span>
+                    <select value={config.errorPlusCol ?? ''} onChange={(e) => setConfig({ errorPlusCol: e.target.value || undefined })}>
+                      <option value="">请选择</option>
+                      {numberCols.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>下误差列</span>
+                    <select value={config.errorMinusCol ?? ''} onChange={(e) => setConfig({ errorMinusCol: e.target.value || undefined })}>
+                      <option value="">请选择</option>
+                      {numberCols.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </label>
+                </>
+              )}
+              {(config.errorMode === 'std' || config.errorMode === 'sem') && config.type === 'scatter' && (
+                <p className="muted small">散点图不支持自动标准差/标准误，请改用折线图或柱状图，或指定误差列。</p>
+              )}
+            </>
+          )}
+
+          {(showLogX || showLogY) && (
+            <div className="row">
+              {showLogX && (
+                <label className="check-label">
+                  <input type="checkbox" checked={config.xLog} data-testid="x-log" onChange={(e) => setConfig({ xLog: e.target.checked })} />
+                  X 对数坐标
+                </label>
+              )}
+              {showLogY && (
+                <label className="check-label">
+                  <input type="checkbox" checked={config.yLog} data-testid="y-log" onChange={(e) => setConfig({ yLog: e.target.checked })} />
+                  Y 对数坐标
+                </label>
+              )}
+            </div>
+          )}
+
+          <details className="extras" data-testid="extras-refline">
+            <summary>参考线（{config.refLines.length}）</summary>
+            <div className="row">
+              <select value={refAxis} onChange={(e) => setRefAxis(e.target.value as 'x' | 'y')}>
+                <option value="y">水平（Y = 值）</option>
+                <option value="x">垂直（X = 值）</option>
+              </select>
+              <input type="number" placeholder="数值" value={refValue} onChange={(e) => setRefValue(e.target.value)} />
+              <input placeholder="标签（可选）" value={refLabel} onChange={(e) => setRefLabel(e.target.value)} />
+              <button
+                className="btn small-btn"
+                disabled={refValue === '' || Number.isNaN(Number(refValue))}
+                onClick={() => {
+                  setConfig({ refLines: [...config.refLines, { axis: refAxis, value: Number(refValue), label: refLabel }] })
+                  setRefValue('')
+                  setRefLabel('')
+                }}
+              >添加</button>
+            </div>
+            {config.refLines.map((rl, i) => (
+              <div key={i} className="row small">
+                <span>{rl.axis === 'y' ? '水平' : '垂直'} {rl.value}{rl.label ? `（${rl.label}）` : ''}</span>
+                <button className="btn btn-ghost small-btn" onClick={() => setConfig({ refLines: config.refLines.filter((_, j) => j !== i) })}>删除</button>
+              </div>
+            ))}
+          </details>
+
+          <details className="extras" data-testid="extras-annotation">
+            <summary>文本标注（{config.annotations.length}）</summary>
+            <div className="row">
+              <input placeholder="文本" value={annText} data-testid="ann-text" onChange={(e) => setAnnText(e.target.value)} />
+              <input type="number" step="0.05" min="0" max="1" title="横向位置（0-1）" value={annX} onChange={(e) => setAnnX(e.target.value)} />
+              <input type="number" step="0.05" min="0" max="1" title="纵向位置（0-1）" value={annY} onChange={(e) => setAnnY(e.target.value)} />
+              <button
+                className="btn small-btn"
+                disabled={!annText.trim()}
+                onClick={() => {
+                  setConfig({
+                    annotations: [...config.annotations, { x: Number(annX), y: Number(annY), text: annText.trim() }],
+                  })
+                  setAnnText('')
+                }}
+              >添加</button>
+            </div>
+            <p className="muted small">位置为图表区域相对坐标（0–1）。</p>
+            {config.annotations.map((an, i) => (
+              <div key={i} className="row small">
+                <span>“{an.text}” @ ({an.x}, {an.y})</span>
+                <button className="btn btn-ghost small-btn" onClick={() => setConfig({ annotations: config.annotations.filter((_, j) => j !== i) })}>删除</button>
+              </div>
+            ))}
+          </details>
 
           <label className="field">
             <span>图表标题</span>

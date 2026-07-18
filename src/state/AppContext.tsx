@@ -36,6 +36,7 @@ export const initialState: AppState = {
 export type Action =
   | { type: 'PARSE_START' }
   | { type: 'PARSE_PROGRESS'; ratio: number }
+  | { type: 'PARSE_CANCEL' }
   | { type: 'PARSE_SUCCESS'; dataset: Dataset; fileName: string; sheetName?: string; warnings: string[] }
   | { type: 'PARSE_ERROR'; message: string }
   | { type: 'SET_OPERATIONS'; operations: Operation[] }
@@ -50,6 +51,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, status: 'parsing', progress: 0, error: null, warnings: [] }
     case 'PARSE_PROGRESS':
       return { ...state, progress: action.ratio }
+    case 'PARSE_CANCEL':
+      return { ...state, status: state.original ? 'ready' : 'idle', progress: 0, error: null }
     case 'PARSE_SUCCESS':
       return {
         ...state,

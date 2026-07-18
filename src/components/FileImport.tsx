@@ -1,18 +1,8 @@
 import { useCallback, useRef, useState } from 'react'
 import { useApp } from '../state/AppContext'
-import {
-  decodeText,
-  isExcelFile,
-  isSupportedFile,
-  looksLikeBinary,
-  MAX_FILE_SIZE,
-  parseCsvText,
-  readWorkbook,
-  sheetToDataset,
-  WARN_FILE_SIZE,
-} from '../lib/parse'
-import { setWorkbook } from '../lib/workbookStore'
-import type { WorkBook } from 'xlsx'
+import { isExcelFile, isSupportedFile, MAX_FILE_SIZE, WARN_FILE_SIZE } from '../lib/parse'
+import { cancelParse, listSheetsInWorker, parseSheetInWorker, parseTextInWorker } from '../lib/parseClient'
+import { getSourceFile, setSourceFile } from '../lib/bufferStore'
 
 let toastId = 0
 function nextToastId() {
@@ -22,7 +12,7 @@ function nextToastId() {
 export default function FileImport() {
   const { state, dispatch } = useApp()
   const [dragOver, setDragOver] = useState(false)
-  const [pendingSheets, setPendingSheets] = useState<{ wb: WorkBook; name: string; sheets: string[] } | null>(null)
+  const [pendingSheets, setPendingSheets] = useState<{ name: string; sheets: string[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const toast = useCallback(
@@ -32,17 +22,26 @@ export default function FileImport() {
     [dispatch],
   )
 
+  const fail = useCallback(
+    (msg: string) => {
+      dispatch({ type: 'PARSE_ERROR', message: msg })
+      toast('error', msg)
+    },
+    [dispatch, toast],
+  )
+
   const parseSheet = useCallback(
-    (wb: WorkBook, fileName: string, sheetName: string) => {
+    async (buffer: ArrayBuffer, fileName: string, sheetName: string) => {
       dispatch({ type: 'PARSE_START' })
-      setTimeout(() => {
-        const result = sheetToDataset(wb, sheetName, fileName)
+      try {
+        const { result, sheets } = await parseSheetInWorker(fileName, buffer, sheetName, (ratio) =>
+          dispatch({ type: 'PARSE_PROGRESS', ratio }),
+        )
         if (result.error || !result.dataset) {
-          dispatch({ type: 'PARSE_ERROR', message: result.error ?? '解析失败' })
-          toast('error', result.error ?? '解析失败')
+          fail(result.error ?? '解析失败')
           return
         }
-        setWorkbook(wb, fileName)
+        setSourceFile(buffer, fileName, sheets)
         dispatch({
           type: 'PARSE_SUCCESS',
           dataset: result.dataset,
@@ -51,98 +50,89 @@ export default function FileImport() {
           warnings: result.warnings,
         })
         toast('success', `已加载工作表「${sheetName}」：${result.rowCount.toLocaleString()} 行 × ${result.columnCount} 列`)
-      }, 30)
+      } catch (e) {
+        if (e instanceof Error && e.message === '已取消解析') return
+        fail(e instanceof Error ? e.message : String(e))
+      }
     },
-    [dispatch, toast],
+    [dispatch, fail, toast],
   )
 
   const handleFile = useCallback(
-    (file: File) => {
+    async (file: File) => {
       if (!isSupportedFile(file.name)) {
-        const msg = `不支持的文件格式：${file.name}。请使用 CSV、XLSX、XLS 或 TXT 文件`
-        dispatch({ type: 'PARSE_ERROR', message: msg })
-        toast('error', msg)
+        fail(`不支持的文件格式：${file.name}。请使用 CSV、XLSX、XLS 或 TXT 文件`)
         return
       }
       if (file.size > MAX_FILE_SIZE) {
-        const msg = `文件过大（${(file.size / 1024 / 1024).toFixed(1)} MB），超过 ${MAX_FILE_SIZE / 1024 / 1024} MB 上限`
-        dispatch({ type: 'PARSE_ERROR', message: msg })
-        toast('error', msg)
+        fail(`文件过大（${(file.size / 1024 / 1024).toFixed(1)} MB），超过 ${MAX_FILE_SIZE / 1024 / 1024} MB 上限`)
         return
       }
       if (file.size === 0) {
-        const msg = '文件为空，没有可解析的内容'
-        dispatch({ type: 'PARSE_ERROR', message: msg })
-        toast('error', msg)
+        fail('文件为空，没有可解析的内容')
         return
       }
-      const warnings: string[] = []
+      const preWarnings: string[] = []
       if (file.size > WARN_FILE_SIZE) {
-        warnings.push(`文件较大（${(file.size / 1024 / 1024).toFixed(1)} MB），解析可能需要一些时间`)
+        preWarnings.push(`文件较大（${(file.size / 1024 / 1024).toFixed(1)} MB），解析可能需要一些时间`)
       }
       dispatch({ type: 'PARSE_START' })
-      const reader = new FileReader()
-      reader.onerror = () => {
-        dispatch({ type: 'PARSE_ERROR', message: '文件读取失败，请重试' })
-        toast('error', '文件读取失败，请重试')
+      let buffer: ArrayBuffer
+      try {
+        buffer = await file.arrayBuffer()
+      } catch {
+        fail('文件读取失败，请重试')
+        return
       }
-      reader.onload = () => {
+      if (isExcelFile(file.name)) {
         try {
-          const buffer = reader.result as ArrayBuffer
-          if (isExcelFile(file.name)) {
-            const { workbook, error } = readWorkbook(buffer)
-            if (error || !workbook) {
-              dispatch({ type: 'PARSE_ERROR', message: error ?? 'Excel 解析失败' })
-              toast('error', error ?? 'Excel 解析失败')
-              return
-            }
-            if (workbook.SheetNames.length > 1) {
-              setPendingSheets({ wb: workbook, name: file.name, sheets: workbook.SheetNames })
-              dispatch({ type: 'RESET' })
-              return
-            }
-            parseSheet(workbook, file.name, workbook.SheetNames[0])
+          const sheets = await listSheetsInWorker(buffer)
+          if (sheets.length === 0) {
+            fail('Excel 文件中没有工作表')
             return
           }
-          const { text, encoding } = decodeText(buffer)
-          if (looksLikeBinary(buffer)) {
-            const msg = '文件内容疑似二进制数据或已损坏，无法作为文本解析'
-            dispatch({ type: 'PARSE_ERROR', message: msg })
-            toast('error', msg)
+          if (sheets.length > 1) {
+            setSourceFile(buffer, file.name, sheets)
+            setPendingSheets({ name: file.name, sheets })
+            dispatch({ type: 'PARSE_CANCEL' })
             return
           }
-          const result = parseCsvText(text, file.name, undefined, (ratio) =>
-            dispatch({ type: 'PARSE_PROGRESS', ratio }),
-          )
-          const allWarnings = [...warnings, `检测到编码：${encoding}`, ...result.warnings]
-          if (result.error || !result.dataset) {
-            dispatch({ type: 'PARSE_ERROR', message: result.error ?? '解析失败' })
-            toast('error', result.error ?? '解析失败')
-            return
-          }
-          setWorkbook(null, '')
-          dispatch({
-            type: 'PARSE_SUCCESS',
-            dataset: result.dataset,
-            fileName: file.name,
-            warnings: allWarnings,
-          })
-          toast('success', `已加载 ${file.name}：${result.rowCount.toLocaleString()} 行 × ${result.columnCount} 列`)
+          await parseSheet(buffer, file.name, sheets[0])
         } catch (e) {
-          const msg = `解析失败：${e instanceof Error ? e.message : String(e)}`
-          dispatch({ type: 'PARSE_ERROR', message: msg })
-          toast('error', msg)
+          if (e instanceof Error && e.message === '已取消解析') return
+          fail(e instanceof Error ? e.message : String(e))
         }
+        return
       }
-      reader.readAsArrayBuffer(file)
+      try {
+        setSourceFile(null, '')
+        const { result, encoding } = await parseTextInWorker(file.name, buffer, (ratio) =>
+          dispatch({ type: 'PARSE_PROGRESS', ratio }),
+        )
+        const allWarnings = [...preWarnings, `检测到编码：${encoding}`, ...result.warnings]
+        if (result.error || !result.dataset) {
+          fail(result.error ?? '解析失败')
+          return
+        }
+        dispatch({
+          type: 'PARSE_SUCCESS',
+          dataset: result.dataset,
+          fileName: file.name,
+          warnings: allWarnings,
+        })
+        toast('success', `已加载 ${file.name}：${result.rowCount.toLocaleString()} 行 × ${result.columnCount} 列`)
+      } catch (e) {
+        if (e instanceof Error && e.message === '已取消解析') return
+        fail(e instanceof Error ? e.message : String(e))
+      }
     },
-    [dispatch, parseSheet, toast],
+    [dispatch, fail, parseSheet, toast],
   )
 
   return (
     <section className="panel" data-testid="file-import">
       <h2>文件导入</h2>
-      <p className="muted">支持 CSV、XLSX、XLS、TXT 格式，拖拽或点击选择文件。</p>
+      <p className="muted">支持 CSV、XLSX、XLS、TXT 格式，拖拽或点击选择文件。大文件在后台线程解析，不阻塞界面。</p>
       <div
         className={`dropzone${dragOver ? ' dragover' : ''}`}
         data-testid="dropzone"
@@ -187,7 +177,18 @@ export default function FileImport() {
           <div className="progress-bar">
             <div className="progress-fill" style={{ width: `${Math.max(8, state.progress * 100)}%` }} />
           </div>
-          <span className="muted">正在解析文件…</span>
+          <div className="row">
+            <span className="muted">正在后台线程解析文件…</span>
+            <button
+              className="btn btn-ghost small-btn"
+              data-testid="btn-cancel-parse"
+              onClick={() => {
+                cancelParse()
+                dispatch({ type: 'PARSE_CANCEL' })
+                toast('info', '已取消解析')
+              }}
+            >取消</button>
+          </div>
         </div>
       )}
 
@@ -220,7 +221,8 @@ export default function FileImport() {
                   onClick={() => {
                     const p = pendingSheets
                     setPendingSheets(null)
-                    parseSheet(p.wb, p.name, s)
+                    const { buffer } = getSourceFile()
+                    if (buffer) void parseSheet(buffer, p.name, s)
                   }}
                 >
                   {s}

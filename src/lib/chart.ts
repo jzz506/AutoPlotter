@@ -48,13 +48,26 @@ const THEME = {
   },
 }
 
+const PRESET: Record<string, { fontFamily: string; sizeScale: number; lineWidth: number; markerSize: number }> = {
+  web: { fontFamily: 'system-ui, "PingFang SC", sans-serif', sizeScale: 1, lineWidth: 2, markerSize: 7 },
+  publication: { fontFamily: 'Arial, "PingFang SC", sans-serif', sizeScale: 1.15, lineWidth: 2.5, markerSize: 8 },
+  presentation: { fontFamily: '"PingFang SC", "Microsoft YaHei", sans-serif', sizeScale: 1.6, lineWidth: 3, markerSize: 10 },
+}
+
+export const PRESET_LABELS: Record<string, string> = {
+  web: '网页图',
+  publication: '论文图',
+  presentation: '汇报图',
+}
+
 function baseLayout(config: ChartConfig) {
   const t = THEME[config.theme] ?? THEME.light
+  const p = PRESET[config.preset] ?? PRESET.web
   const layout: Record<string, unknown> = {
     title: config.title ? { text: config.title } : undefined,
     width: config.width,
     height: config.height,
-    font: { size: config.fontSize, color: t.fontColor },
+    font: { size: Math.round(config.fontSize * p.sizeScale), color: t.fontColor, family: p.fontFamily },
     paper_bgcolor: t.paper_bgcolor,
     plot_bgcolor: t.plot_bgcolor,
     showlegend: config.showLegend,
@@ -65,36 +78,47 @@ function baseLayout(config: ChartConfig) {
 
 function axisLayout(config: ChartConfig, horizontal: boolean) {
   const t = THEME[config.theme] ?? THEME.light
-  const axis = (title: string) => ({
+  const axis = (title: string, log: boolean) => ({
     title: title ? { text: title } : undefined,
     showgrid: config.showGrid,
     gridcolor: t.gridcolor,
     zeroline: false,
+    ...(log ? { type: 'log' } : {}),
   })
   if (horizontal) {
-    return { xaxis: axis(config.xLabel || ''), yaxis: axis(config.yLabel || '') }
+    return { xaxis: axis(config.yLabel || '', config.yLog), yaxis: axis(config.xLabel || '', config.xLog) }
   }
-  return { xaxis: axis(config.xLabel || ''), yaxis: axis(config.yLabel || '') }
+  return { xaxis: axis(config.xLabel || '', config.xLog), yaxis: axis(config.yLabel || '', config.yLog) }
 }
 
-function sortPairs(xs: string[], ys: (number | null)[], sortBy: string): [string[], (number | null)[]] {
-  if (sortBy === 'none') return [xs, ys]
-  const idx = xs.map((_, i) => i)
-  idx.sort((a, b) => {
-    switch (sortBy) {
-      case 'x-asc':
-        return xs[a].localeCompare(xs[b], 'zh', { numeric: true })
-      case 'x-desc':
-        return xs[b].localeCompare(xs[a], 'zh', { numeric: true })
-      case 'y-asc':
-        return (ys[a] ?? -Infinity) - (ys[b] ?? -Infinity)
-      case 'y-desc':
-        return (ys[b] ?? -Infinity) - (ys[a] ?? -Infinity)
-      default:
-        return 0
+function decorationsLayout(config: ChartConfig): Record<string, unknown> {
+  const shapes: Record<string, unknown>[] = []
+  const annotations: Record<string, unknown>[] = []
+  for (const rl of config.refLines) {
+    if (rl.axis === 'y') {
+      shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: rl.value, y1: rl.value, line: { color: '#94a3b8', width: 1.5, dash: 'dash' } })
+      if (rl.label) annotations.push({ xref: 'paper', x: 0.99, yref: 'y', y: rl.value, text: rl.label, showarrow: false, xanchor: 'right', font: { size: 11, color: '#64748b' } })
+    } else {
+      shapes.push({ type: 'line', yref: 'paper', y0: 0, y1: 1, xref: 'x', x0: rl.value, x1: rl.value, line: { color: '#94a3b8', width: 1.5, dash: 'dash' } })
+      if (rl.label) annotations.push({ yref: 'paper', y: 0.99, xref: 'x', x: rl.value, text: rl.label, showarrow: false, yanchor: 'top', font: { size: 11, color: '#64748b' } })
     }
-  })
-  return [idx.map((i) => xs[i]), idx.map((i) => ys[i])]
+  }
+  for (const an of config.annotations) {
+    annotations.push({ xref: 'paper', yref: 'paper', x: an.x, y: an.y, text: an.text, showarrow: false, font: { size: 12 } })
+  }
+  const out: Record<string, unknown> = {}
+  if (shapes.length > 0) out.shapes = shapes
+  if (annotations.length > 0) out.annotations = annotations
+  return out
+}
+
+export function stdSem(values: (number | null)[], mode: 'std' | 'sem'): number | null {
+  const nums = values.filter((n): n is number => n !== null)
+  if (nums.length < 2) return null
+  const mean = nums.reduce((a, b) => a + b, 0) / nums.length
+  const variance = nums.reduce((a, b) => a + (b - mean) ** 2, 0) / (nums.length - 1)
+  const std = Math.sqrt(variance)
+  return mode === 'std' ? std : std / Math.sqrt(nums.length)
 }
 
 function sample<T>(arr: T[]): T[] {
@@ -112,8 +136,13 @@ export function buildChart(
 ): ChartBuildResult {
   const { rows, columns } = dataset
   if (rows.length === 0) return { data: [], layout: {}, error: '当前没有数据，请先导入文件' }
-  const layout: Record<string, unknown> = { ...baseLayout(config), ...axisLayout(config, config.type === 'barh') }
+  const layout: Record<string, unknown> = {
+    ...baseLayout(config),
+    ...axisLayout(config, config.type === 'barh'),
+    ...decorationsLayout(config),
+  }
   const t = THEME[config.theme] ?? THEME.light
+  const p = PRESET[config.preset] ?? PRESET.web
   const notes: string[] = []
   const err = (msg: string) => ({ data: [], layout: {}, error: msg, notes: [] })
 
@@ -122,6 +151,49 @@ export function buildChart(
     const i = colIdx(dataset, name)
     if (i < 0) return { error: `列 "${name}" 不存在于当前数据中（可能在“保留列”操作后被移除）` }
     return i
+  }
+
+  const logNote = (name: string | undefined, i: number) => {
+    if (!name || i < 0) return
+    let nonPos = 0
+    for (const r of rows) {
+      const n = parseNumberLoose(r[i] ?? null)
+      if (n !== null && n <= 0) nonPos++
+    }
+    if (nonPos > 0) notes.push(`对数坐标将忽略列「${name}」中的 ${nonPos} 个非正值`)
+  }
+
+  const errorTrace = (rowIdxs: number[]): Record<string, unknown> | undefined => {
+    if (config.errorMode === 'symmetric' && config.errorCol) {
+      const ei = colIdx(dataset, config.errorCol)
+      if (ei < 0) return undefined
+      return { type: 'data', symmetric: true, visible: true, array: rowIdxs.map((i) => parseNumberLoose(rows[i][ei]) ?? 0) }
+    }
+    if (config.errorMode === 'asymmetric' && config.errorPlusCol && config.errorMinusCol) {
+      const ep = colIdx(dataset, config.errorPlusCol)
+      const em = colIdx(dataset, config.errorMinusCol)
+      if (ep < 0 || em < 0) return undefined
+      return {
+        type: 'data',
+        symmetric: false,
+        visible: true,
+        array: rowIdxs.map((i) => parseNumberLoose(rows[i][ep]) ?? 0),
+        arrayminus: rowIdxs.map((i) => parseNumberLoose(rows[i][em]) ?? 0),
+      }
+    }
+    return undefined
+  }
+
+  const errorColsInvalid = (): string | null => {
+    if (config.errorMode === 'symmetric' && config.errorCol && colIdx(dataset, config.errorCol) < 0) {
+      return `误差列 "${config.errorCol}" 不存在`
+    }
+    if (config.errorMode === 'asymmetric') {
+      if (!config.errorPlusCol || !config.errorMinusCol) return '上下误差模式需要分别指定上误差列和下误差列'
+      if (colIdx(dataset, config.errorPlusCol) < 0) return `误差列 "${config.errorPlusCol}" 不存在`
+      if (colIdx(dataset, config.errorMinusCol) < 0) return `误差列 "${config.errorMinusCol}" 不存在`
+    }
+    return null
   }
 
   switch (config.type) {
@@ -136,7 +208,8 @@ export function buildChart(
       }
       const data: Record<string, unknown>[] = []
       const order = rows.map((_, i) => i)
-      if (config.sortBy === 'x-asc' || config.sortBy === 'x-desc') {
+      const groupErr = config.errorMode === 'std' || config.errorMode === 'sem'
+      if (config.sortBy === 'x-asc' || config.sortBy === 'x-desc' || groupErr) {
         const dir = config.sortBy === 'x-desc' ? -1 : 1
         const keyOf = (i: number) => {
           const v = rows[i][xi]
@@ -156,34 +229,61 @@ export function buildChart(
       if (sampledOrder.length < order.length) {
         notes.push(`数据点过多，已均匀采样 ${sampledOrder.length.toLocaleString()} / ${order.length.toLocaleString()} 行用于绘制`)
       }
+      const errColMsg = errorColsInvalid()
+      if (errColMsg) return err(errColMsg)
+      if (groupErr && config.sortBy !== 'x-asc' && config.sortBy !== 'x-desc') {
+        notes.push('标准差/标准误误差棒按 X 分组计算，已按 X 升序排列')
+      }
+      if (config.xLog && xType === 'number') logNote(config.x, xi)
       for (let s = 0; s < yCols.length; s++) {
         const yi = colIdx(dataset, yCols[s])
         if (yi < 0) return err(`列 "${yCols[s]}" 不存在`)
         if (typeOf(profiles, yCols[s]) !== 'number') {
           return err(`折线图的 Y 轴需要数值列，「${yCols[s]}」不是数值列，请先在数据处理中转换类型`)
         }
+        if (config.yLog) logNote(yCols[s], yi)
         const xs: (string | number | null)[] = []
         const ys: (number | null)[] = []
-        for (const i of sampledOrder) {
+        const xOf = (i: number): string | number | null => {
           const xv = rows[i][xi]
           if (xType === 'datetime') {
             const t = parseDateLoose(xv)
-            xs.push(t !== null ? new Date(t).toISOString() : null)
-          } else {
-            xs.push(parseNumberLoose(xv) ?? (xv === null ? null : String(xv)))
+            return t !== null ? new Date(t).toISOString() : null
           }
-          ys.push(parseNumberLoose(rows[i][yi]))
+          return parseNumberLoose(xv) ?? (xv === null ? null : String(xv))
         }
-        data.push({
+        const trace: Record<string, unknown> = {
           type: 'scatter',
           mode: 'lines+markers',
           name: yCols[s],
-          x: xs,
-          y: ys,
-          marker: { color: t.palette[s % t.palette.length] },
-          line: { color: t.palette[s % t.palette.length], width: 2 },
+          marker: { color: t.palette[s % t.palette.length], size: p.markerSize },
+          line: { color: t.palette[s % t.palette.length], width: p.lineWidth },
           connectgaps: false,
-        })
+        }
+        if (config.errorMode === 'std' || config.errorMode === 'sem') {
+          const groups = groupBy(sampledOrder, (i) => String(xOf(i)))
+          for (const [key, ids] of groups) {
+            const vals = ids.map((i) => parseNumberLoose(rows[i][yi]))
+            xs.push(parseNumberLoose(key) ?? key)
+            ys.push(aggregateNumbers(vals, 'mean'))
+          }
+          trace.error_y = {
+            type: 'data',
+            symmetric: true,
+            visible: true,
+            array: [...groups.values()].map((ids) => stdSem(ids.map((i) => parseNumberLoose(rows[i][yi])), config.errorMode as 'std' | 'sem') ?? 0),
+          }
+        } else {
+          for (const i of sampledOrder) {
+            xs.push(xOf(i))
+            ys.push(parseNumberLoose(rows[i][yi]))
+          }
+          const ey = errorTrace(sampledOrder)
+          if (ey) trace.error_y = ey
+        }
+        trace.x = xs
+        trace.y = ys
+        data.push(trace)
       }
       return { data, layout, notes }
     }
@@ -197,6 +297,13 @@ export function buildChart(
         return err(`散点图要求 X 和 Y 都是数值列；当前 X「${typeOf(profiles, config.x)}」，Y「${typeOf(profiles, config.y)}」`)
       }
       const ci = colIdx(dataset, config.color)
+      const errColMsg = errorColsInvalid()
+      if (errColMsg) return err(errColMsg)
+      if (config.errorMode === 'std' || config.errorMode === 'sem') {
+        return err('散点图不支持自动标准差/标准误（会改变数据形态）；请指定误差列，或改用折线图/柱状图')
+      }
+      if (config.xLog) logNote(config.x, xi)
+      if (config.yLog) logNote(config.y, yi)
       const data: Record<string, unknown>[] = []
       const idx = sample(rows.map((_, i) => i))
       if (idx.length < rows.length) {
@@ -219,23 +326,29 @@ export function buildChart(
         }
         let s = 0
         for (const [key, ids] of groups) {
-          data.push({
+          const trace: Record<string, unknown> = {
             type: 'scatter',
             mode: 'markers',
             name: key,
             x: ids.map((i) => parseNumberLoose(rows[i][xi])),
             y: ids.map((i) => parseNumberLoose(rows[i][yi])),
-            marker: { color: t.palette[s++ % t.palette.length], size: 7, opacity: 0.75 },
-          })
+            marker: { color: t.palette[s++ % t.palette.length], size: p.markerSize, opacity: 0.75 },
+          }
+          const ey = errorTrace(ids)
+          if (ey) trace.error_y = ey
+          data.push(trace)
         }
       } else {
-        data.push({
+        const trace: Record<string, unknown> = {
           type: 'scatter',
           mode: 'markers',
           x: idx.map((i) => parseNumberLoose(rows[i][xi])),
           y: idx.map((i) => parseNumberLoose(rows[i][yi])),
-          marker: { color: t.palette[0], size: 7, opacity: 0.75 },
-        })
+          marker: { color: t.palette[0], size: p.markerSize, opacity: 0.75 },
+        }
+        const ey = errorTrace(idx)
+        if (ey) trace.error_y = ey
+        data.push(trace)
       }
       return { data, layout, notes }
     }
@@ -244,9 +357,13 @@ export function buildChart(
     case 'barh': {
       const xi = needCol(config.x, config.type === 'bar' ? 'X 轴（类别）列' : '类别轴列')
       if (typeof xi !== 'number') return err(xi.error)
+      const errColMsg = errorColsInvalid()
+      if (errColMsg) return err(errColMsg)
       const agg = config.aggregation === 'none' ? 'mean' : config.aggregation
       let ys: (number | null)[]
       let labels: string[]
+      let errArr: (number | null)[] | null = null
+      let errMinusArr: (number | null)[] | null = null
       if (agg === 'count' || !config.y) {
         const counts = new Map<string, number>()
         for (const r of rows) {
@@ -255,21 +372,57 @@ export function buildChart(
         }
         labels = [...counts.keys()]
         ys = [...counts.values()]
+        if (config.errorMode !== 'none') notes.push('计数模式下误差棒不可用，已忽略误差设置')
       } else {
         const yi = needCol(config.y, 'Y 轴（数值）列')
         if (typeof yi !== 'number') return err(yi.error)
         if (typeOf(profiles, config.y) !== 'number') {
           return err(`柱状图的 Y 轴需要数值列，「${config.y}」类型为「${typeOf(profiles, config.y)}」；或改用“计数”聚合`)
         }
+        if (config.yLog) logNote(config.y, yi)
         const groups = groupBy(rows, (r) => String(r[xi] ?? '(缺失)'))
         labels = [...groups.keys()]
         ys = labels.map((k) => aggregateNumbers(groups.get(k)!.map((r) => r[yi] ?? null), agg))
+        if (config.errorMode === 'std' || config.errorMode === 'sem') {
+          errArr = labels.map((k) => stdSem(groups.get(k)!.map((r) => parseNumberLoose(r[yi] ?? null)), config.errorMode as 'std' | 'sem'))
+        } else if (config.errorMode === 'symmetric' && config.errorCol) {
+          const ei = colIdx(dataset, config.errorCol)
+          errArr = labels.map((k) => aggregateNumbers(groups.get(k)!.map((r) => r[ei] ?? null), 'mean'))
+        } else if (config.errorMode === 'asymmetric' && config.errorPlusCol && config.errorMinusCol) {
+          const ep = colIdx(dataset, config.errorPlusCol)
+          const em = colIdx(dataset, config.errorMinusCol)
+          errArr = labels.map((k) => aggregateNumbers(groups.get(k)!.map((r) => r[ep] ?? null), 'mean'))
+          errMinusArr = labels.map((k) => aggregateNumbers(groups.get(k)!.map((r) => r[em] ?? null), 'mean'))
+        }
       }
-      ;[labels, ys] = sortPairs(labels, ys, config.sortBy)
+      if (errArr || config.sortBy !== 'none') {
+        const combined = labels.map((l, i) => ({ l, y: ys[i], e: errArr?.[i] ?? null, em: errMinusArr?.[i] ?? null }))
+        const orderIdx = combined.map((_, i) => i)
+        orderIdx.sort((a, b) => {
+          switch (config.sortBy) {
+            case 'x-asc':
+              return combined[a].l.localeCompare(combined[b].l, 'zh', { numeric: true })
+            case 'x-desc':
+              return combined[b].l.localeCompare(combined[a].l, 'zh', { numeric: true })
+            case 'y-asc':
+              return (combined[a].y ?? -Infinity) - (combined[b].y ?? -Infinity)
+            case 'y-desc':
+              return (combined[b].y ?? -Infinity) - (combined[a].y ?? -Infinity)
+            default:
+              return 0
+          }
+        })
+        labels = orderIdx.map((i) => combined[i].l)
+        ys = orderIdx.map((i) => combined[i].y)
+        if (errArr) errArr = orderIdx.map((i) => combined[i].e)
+        if (errMinusArr) errMinusArr = orderIdx.map((i) => combined[i].em)
+      }
       if (labels.length > 50) {
         notes.push(`类别数量过多（${labels.length} 个），按当前排序仅显示前 50 个`)
         labels = labels.slice(0, 50)
         ys = ys.slice(0, 50)
+        if (errArr) errArr = errArr.slice(0, 50)
+        if (errMinusArr) errMinusArr = errMinusArr.slice(0, 50)
       }
       const horizontal = config.type === 'barh'
       const trace: Record<string, unknown> = {
@@ -280,10 +433,12 @@ export function buildChart(
       if (horizontal) {
         trace.x = ys
         trace.y = labels
+        if (errArr) trace.error_x = { type: 'data', symmetric: errMinusArr === null, visible: true, array: errArr, ...(errMinusArr ? { arrayminus: errMinusArr } : {}) }
         layout.yaxis = { ...(layout.yaxis as object), autorange: 'reversed' }
       } else {
         trace.x = labels
         trace.y = ys
+        if (errArr) trace.error_y = { type: 'data', symmetric: errMinusArr === null, visible: true, array: errArr, ...(errMinusArr ? { arrayminus: errMinusArr } : {}) }
       }
       return { data: [trace], layout, notes }
     }

@@ -110,4 +110,66 @@ describe('Python 代码生成', () => {
     expect(script).toContain('.corr()')
     expect(script).toContain('px.imshow')
   })
+
+  it('误差棒：对称误差列', () => {
+    const script = generatePythonScript({
+      fileName: 'd.csv',
+      operations: [],
+      chart: defaultChartConfig({ type: 'scatter', x: 'a', y: 'b', errorMode: 'symmetric', errorCol: 'err' }),
+    })
+    expect(script).toContain('error_y="err"')
+  })
+
+  it('误差棒：上下误差列', () => {
+    const script = generatePythonScript({
+      fileName: 'd.csv',
+      operations: [],
+      chart: defaultChartConfig({
+        type: 'line', x: 'a', y: 'b', errorMode: 'asymmetric', errorPlusCol: 'up', errorMinusCol: 'down',
+      }),
+    })
+    expect(script).toContain('error_y="up"')
+    expect(script).toContain('error_y_minus="down"')
+  })
+
+  it('误差棒：柱状图标准误', () => {
+    const script = generatePythonScript({
+      fileName: 'd.csv',
+      operations: [],
+      chart: defaultChartConfig({ type: 'bar', x: 'g', y: 'v', aggregation: 'mean', errorMode: 'sem' }),
+    })
+    expect(script).toContain("lambda s: s.std() / (len(s) ** 0.5)")
+    expect(script).toContain("error_y='_err'")
+  })
+
+  it('对数坐标、参考线与标注', () => {
+    const script = generatePythonScript({
+      fileName: 'd.csv',
+      operations: [],
+      chart: defaultChartConfig({
+        type: 'line',
+        x: 'a',
+        y: 'b',
+        yLog: true,
+        xLog: true,
+        refLines: [{ axis: 'y', value: 100, label: '阈值' }],
+        annotations: [{ x: 0.5, y: 0.9, text: '备注' }],
+      }),
+    })
+    expect(script).toContain("fig.update_xaxes(type='log')")
+    expect(script).toContain("fig.update_yaxes(type='log')")
+    expect(script).toContain("fig.add_hline(y=100")
+    expect(script).toContain('阈值')
+    expect(script).toContain("fig.add_annotation(x=0.5, y=0.9")
+    expect(script).toContain('备注')
+  })
+
+  it('论文图预设调整字体', () => {
+    const script = generatePythonScript({
+      fileName: 'd.csv',
+      operations: [],
+      chart: defaultChartConfig({ type: 'line', x: 'a', y: 'b', preset: 'publication' }),
+    })
+    expect(script).toContain("family='Arial'")
+  })
 })

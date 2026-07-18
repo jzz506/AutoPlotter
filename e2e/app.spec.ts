@@ -140,6 +140,28 @@ test('数据处理：删除重复行、筛选并恢复原始数据', async ({ pa
   await expect(page.getByTestId('data-processing')).toContainText('14 行')
 })
 
+test('误差棒、预设、对数坐标与参考线', async ({ page }) => {
+  const errors = collectConsoleErrors(page)
+  await uploadFile(page, '类别统计数据.csv')
+  await page.getByTestId('tab-chart').click()
+  const canvas = page.getByTestId('chart-canvas')
+
+  await page.getByTestId('chart-type').selectOption('bar')
+  await page.getByTestId('chart-x').selectOption('部门')
+  await page.getByTestId('chart-y').selectOption('季度销售额')
+  await expect(canvas.locator('.js-plotly-plot').first()).toBeVisible({ timeout: 15000 })
+
+  await page.getByTestId('error-mode').selectOption('std')
+  await expect(canvas.locator('.js-plotly-plot').first()).toBeVisible({ timeout: 15000 })
+  await expect(canvas.locator('.chart-error')).toHaveCount(0)
+
+  await page.getByTestId('chart-preset').selectOption('publication')
+  await page.getByTestId('y-log').check()
+  await expect(canvas.locator('.js-plotly-plot').first()).toBeVisible({ timeout: 15000 })
+  await expect(canvas.locator('.chart-error')).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
 test('可复现 Python 脚本生成与下载', async ({ page }) => {
   await uploadFile(page, '时间序列数据.csv')
   await page.getByTestId('tab-recommend').click()

@@ -303,3 +303,7 @@ select, input[type='text'], input[type='number'], input:not([type]) {
 
 .chart-notes { margin-bottom: 8px; }
 .chart-notes .alert { margin-top: 0; margin-bottom: 6px; }
+
+.extras { margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+.extras summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.extras .row.small { font-size: 12.5px; justify-content: space-between; }

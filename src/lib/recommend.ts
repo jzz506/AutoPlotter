@@ -14,6 +14,12 @@ export function defaultChartConfig(partial: Partial<ChartConfig>): ChartConfig {
     height: 440,
     fontSize: 13,
     theme: 'light',
+    preset: 'web',
+    xLog: false,
+    yLog: false,
+    errorMode: 'none',
+    refLines: [],
+    annotations: [],
     ...partial,
   }
 }

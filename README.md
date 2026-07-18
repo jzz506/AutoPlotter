@@ -2,13 +2,13 @@
 
 本地可视化自动数据分析与绘图应用。所有数据仅在本机浏览器内存中处理，**无后端、不上传任何数据**。
 
-当前版本：**1.0.0**（更新日志见 [CHANGELOG.md](CHANGELOG.md)）
+当前版本：**1.0.1**（更新日志见 [CHANGELOG.md](CHANGELOG.md)）
 
 ## 环境要求
 
 - 使用网页版：macOS + Node.js 20 或更高版本
 - 构建桌面版：另需 Rust 工具链（`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`）
-- 直接安装：打开 `dist-dmg/AutoPlotter_1.0.0_aarch64.dmg`（Apple Silicon Mac），无需任何开发环境
+- 直接安装：打开 `dist-dmg/AutoPlotter_1.0.1_aarch64.dmg`（Apple Silicon Mac），无需任何开发环境
 
 ## 功能
 
@@ -25,14 +25,14 @@
 
 ### 桌面应用（推荐）
 
-双击打开 `dist-dmg/AutoPlotter_1.0.0_aarch64.dmg`（或自行构建，见下），将 AutoPlotter 拖入 Applications 即可。无需 Apple Developer 账号，未做付费签名；首次打开如提示"无法验证开发者"，在 系统设置 → 隐私与安全性 中允许，或右键 → 打开。
+双击打开 `dist-dmg/AutoPlotter_1.0.1_aarch64.dmg`（或自行构建，见下），将 AutoPlotter 拖入 Applications 即可。无需 Apple Developer 账号，未做付费签名；首次打开如提示"无法验证开发者"，在 系统设置 → 隐私与安全性 中允许，或右键 → 打开。
 
 自行构建桌面应用：
 
 ```bash
 npm install
 npm run tauri:build   # 产出 src-tauri/target/release/bundle/macos/AutoPlotter.app
-npm run tauri:dmg     # 同时生成 src-tauri/target/release/bundle/dmg/AutoPlotter_1.0.0_aarch64.dmg
+npm run tauri:dmg     # 同时生成 src-tauri/target/release/bundle/dmg/AutoPlotter_1.0.1_aarch64.dmg
 ```
 
 桌面版基于 Tauri 2（系统 WebView），支持从 Finder 直接拖拽 CSV / XLSX / XLS / TXT 到窗口；导出文件时弹出原生保存对话框。数据仍然只在本机处理。

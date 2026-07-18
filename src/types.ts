@@ -71,6 +71,22 @@ export type SortMode = 'none' | 'x-asc' | 'x-desc' | 'y-asc' | 'y-desc'
 
 export type ChartTheme = 'light' | 'dark' | 'minimal'
 
+export type ChartPreset = 'web' | 'publication' | 'presentation'
+
+export type ErrorMode = 'none' | 'symmetric' | 'asymmetric' | 'std' | 'sem'
+
+export interface RefLine {
+  axis: 'x' | 'y'
+  value: number
+  label: string
+}
+
+export interface ChartAnnotation {
+  x: number
+  y: number
+  text: string
+}
+
 export interface ChartConfig {
   type: ChartType
   x?: string
@@ -87,6 +103,15 @@ export interface ChartConfig {
   height: number
   fontSize: number
   theme: ChartTheme
+  preset: ChartPreset
+  xLog: boolean
+  yLog: boolean
+  errorMode: ErrorMode
+  errorCol?: string
+  errorPlusCol?: string
+  errorMinusCol?: string
+  refLines: RefLine[]
+  annotations: ChartAnnotation[]
 }
 
 export interface Recommendation {

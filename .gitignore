@@ -32,3 +32,6 @@ src-tauri/target
 
 # 构建产物
 dist-dmg
+
+# 压力测试数据（体积大，可用 scripts/make-stress-data.mjs 重新生成）
+sample-data/stress/

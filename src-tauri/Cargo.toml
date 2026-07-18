@@ -1,6 +1,6 @@
 [package]
 name = "autoplotter"
-version = "1.0.0"
+version = "1.0.1"
 description = "本地可视化自动数据分析与绘图"
 edition = "2021"
 rust-version = "1.77.2"
