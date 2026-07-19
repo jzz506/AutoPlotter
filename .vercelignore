@@ -1,0 +1,12 @@
+.git
+node_modules
+src-tauri
+sample-data
+e2e
+e2e-perf
+test-results
+playwright-report
+dist-dmg
+scripts
+*.log
+.vercel
